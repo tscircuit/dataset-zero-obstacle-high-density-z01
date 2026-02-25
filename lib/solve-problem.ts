@@ -158,6 +158,7 @@ export async function solveProblem(
     height: problem.nodeWithPortPoints.height,
     pngFilePath: routedImagePath,
     sizePx: imageSizePx,
+    pointRadiusPx: connectionPairPointRadiusPx,
   })
 
   return {
