@@ -1,6 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { parseArgs } from "node:util"
 import { Resvg } from "@resvg/resvg-js"
+import {
+  CELL_SIZE_MM,
+  IMAGE_SIZE_PX,
+  VIA_DIAMETER_MM,
+  TRACE_THICKNESS_MM,
+  TRACE_MARGIN_MM,
+  MAX_SOLVE_ATTEMPTS,
+} from "../lib/generator-params.ts"
 
 type GeneratedSampleResponse = {
   ok: boolean
@@ -24,23 +33,47 @@ type DatasetRow = {
   routed_paths: unknown[]
 }
 
-const sampleCountArg = process.argv[2]
-const endpointArg = process.argv[3]
-const outputDir = process.argv[4]
-const concurrencyRaw = process.argv[5]
+const { values: args } = parseArgs({
+  options: {
+    "sample-count": { type: "string" },
+    endpoint: { type: "string" },
+    "output-dir": { type: "string" },
+    concurrency: { type: "string" },
+  },
+  strict: true,
+})
 
-if (!sampleCountArg || !endpointArg || !outputDir || !concurrencyRaw) {
-  throw new Error(
-    "Usage: bun scripts/generate-against-server.ts <sampleCount> <endpointUrl> <outputDir> <concurrency>",
+const requiredFlags = {
+  "--sample-count": args["sample-count"],
+  "--output-dir": args["output-dir"],
+  "--concurrency": args.concurrency,
+} as const
+
+const missing = Object.entries(requiredFlags)
+  .filter(([, v]) => !v)
+  .map(([k]) => k)
+
+if (missing.length > 0) {
+  console.error(
+    `Missing required flags: ${missing.join(", ")}\n\nUsage: bun scripts/generate-against-server.ts --sample-count <n> --output-dir <dir> --concurrency <n> [--endpoint <url>]`,
   )
+  process.exit(1)
 }
 
-const sampleCount = parsePositiveInt(sampleCountArg)
-const concurrency = parsePositiveInt(concurrencyRaw)
+const sampleCount = parsePositiveInt(requiredFlags["--sample-count"]!)
+const concurrency = parsePositiveInt(requiredFlags["--concurrency"]!)
+const outputDir = requiredFlags["--output-dir"]!
 
-const endpointUrl = endpointArg.endsWith("/")
-  ? `${endpointArg}generate`
-  : `${endpointArg}/generate`
+const endpointBase = args.endpoint ?? process.env.ENDPOINT_URL
+if (!endpointBase) {
+  console.error(
+    "Missing endpoint URL. Provide --endpoint <url> or set ENDPOINT_URL in .env",
+  )
+  process.exit(1)
+}
+const endpointUrl = endpointBase.endsWith("/")
+  ? `${endpointBase}generate`
+  : `${endpointBase}/generate`
 
 const connectionPairDir = join(outputDir, "images", "connection-pairs")
 const routedDir = join(outputDir, "images", "routed")
@@ -137,12 +170,12 @@ async function worker(): Promise<void> {
           problemId: sampleId,
           seed,
           pairCount: pairCountForIndex(index),
-          minPointSeparationMm: 0.61,
-          cellSizeMm: 0.1,
-          viaDiameterMm: 0.61,
-          traceThicknessMm: 0.15,
-          traceMarginMm: 0.1,
-          maxSolveAttempts: 32,
+          minPointSeparationMm: VIA_DIAMETER_MM,
+          cellSizeMm: CELL_SIZE_MM,
+          viaDiameterMm: VIA_DIAMETER_MM,
+          traceThicknessMm: TRACE_THICKNESS_MM,
+          traceMarginMm: TRACE_MARGIN_MM,
+          maxSolveAttempts: MAX_SOLVE_ATTEMPTS,
         }),
       })
 
@@ -210,7 +243,7 @@ async function writeSvgAndPng(
   const pngBytes = new Resvg(svgContent, {
     fitTo: {
       mode: "width",
-      value: 1024,
+      value: IMAGE_SIZE_PX,
     },
   })
     .render()

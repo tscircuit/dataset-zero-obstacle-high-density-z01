@@ -11,6 +11,14 @@ import {
   type BoundaryConnectionPair,
   generateProblem,
 } from "./generate-problem.ts"
+import {
+  CELL_SIZE_MM,
+  VIA_DIAMETER_MM,
+  TRACE_THICKNESS_MM,
+  TRACE_MARGIN_MM,
+  IMAGE_SIZE_PX,
+  MAX_SOLVE_ATTEMPTS,
+} from "./generator-params.ts"
 
 const GRAPHICS_PADDING_PX = 40
 
@@ -60,9 +68,9 @@ type RuntimeSolver = HighDensitySolverA01 & {
 export async function generateSample(
   input: GenerateSampleInput,
 ): Promise<GenerateSampleResult> {
-  const maxSolveAttempts = input.maxSolveAttempts ?? 24
-  const imageSizePx = input.imageSizePx ?? 1024
-  const viaDiameterMm = input.viaDiameterMm ?? 0.61
+  const maxSolveAttempts = input.maxSolveAttempts ?? MAX_SOLVE_ATTEMPTS
+  const imageSizePx = input.imageSizePx ?? IMAGE_SIZE_PX
+  const viaDiameterMm = input.viaDiameterMm ?? VIA_DIAMETER_MM
 
   for (let attempt = 1; attempt <= maxSolveAttempts; attempt += 1) {
     const usedSeed = input.seed + attempt - 1
@@ -75,10 +83,10 @@ export async function generateSample(
 
     const solver = new HighDensitySolverA01({
       nodeWithPortPoints: problem.nodeWithPortPoints,
-      cellSizeMm: input.cellSizeMm ?? 0.1,
+      cellSizeMm: input.cellSizeMm ?? CELL_SIZE_MM,
       viaDiameter: viaDiameterMm,
-      traceThickness: input.traceThicknessMm ?? 0.15,
-      traceMargin: input.traceMarginMm ?? 0.1,
+      traceThickness: input.traceThicknessMm ?? TRACE_THICKNESS_MM,
+      traceMargin: input.traceMarginMm ?? TRACE_MARGIN_MM,
       hyperParameters: {
         shuffleSeed: hashSeed(problem.problemId),
       },
@@ -101,10 +109,10 @@ export async function generateSample(
 
     const pairedSolver = new HighDensitySolverA01({
       nodeWithPortPoints: problem.nodeWithPortPoints,
-      cellSizeMm: input.cellSizeMm ?? 0.1,
+      cellSizeMm: input.cellSizeMm ?? CELL_SIZE_MM,
       viaDiameter: viaDiameterMm,
-      traceThickness: input.traceThicknessMm ?? 0.15,
-      traceMargin: input.traceMarginMm ?? 0.1,
+      traceThickness: input.traceThicknessMm ?? TRACE_THICKNESS_MM,
+      traceMargin: input.traceMarginMm ?? TRACE_MARGIN_MM,
     }) as RuntimeSolver
     pairedSolver.setup()
 

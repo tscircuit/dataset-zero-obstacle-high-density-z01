@@ -5,16 +5,21 @@ import {
   type GeneratedProblem,
   generateProblem,
 } from "../lib/generate-problem.ts"
+import {
+  CELL_SIZE_MM,
+  VIA_DIAMETER_MM,
+  TRACE_THICKNESS_MM,
+  TRACE_MARGIN_MM,
+  IMAGE_SIZE_PX,
+  MIN_CONNECTIONS,
+  MAX_CONNECTIONS,
+} from "../lib/generator-params.ts"
 import { solveProblem } from "../lib/solve-problem.ts"
 
 const sampleCount = parseSampleCount(process.argv[2])
 const outputDir = process.argv[3] ?? "dataset"
 const failures: Array<{ problemId: string; reason: string }> = []
 const pairCountBySampleIndex = new Map<number, number>()
-
-const MIN_CONNECTIONS = 2
-const MAX_CONNECTIONS = 10
-const VIA_DIAMETER_MM = 0.61
 
 await mkdir(outputDir, { recursive: true })
 await mkdir(join(outputDir, "images", "connection-pairs"), { recursive: true })
@@ -54,11 +59,11 @@ while (solvedCount < sampleCount && attempts < maxAttempts) {
 
   const result = await solveProblem(problem, {
     outputDir,
-    imageSizePx: 1024,
-    cellSizeMm: 0.1,
+    imageSizePx: IMAGE_SIZE_PX,
+    cellSizeMm: CELL_SIZE_MM,
     viaDiameterMm: VIA_DIAMETER_MM,
-    traceThicknessMm: 0.15,
-    traceMarginMm: 0.1,
+    traceThicknessMm: TRACE_THICKNESS_MM,
+    traceMarginMm: TRACE_MARGIN_MM,
   })
 
   if (!result.ok) {

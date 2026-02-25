@@ -15,6 +15,13 @@ import type {
   BoundaryConnectionPair,
   GeneratedProblem,
 } from "./generate-problem.ts"
+import {
+  CELL_SIZE_MM,
+  VIA_DIAMETER_MM,
+  TRACE_THICKNESS_MM,
+  TRACE_MARGIN_MM,
+  IMAGE_SIZE_PX,
+} from "./generator-params.ts"
 
 const GRAPHICS_PADDING_PX = 40
 
@@ -125,14 +132,14 @@ export async function solveProblemToImageArtifacts(
   problem: GeneratedProblem,
   options: SolveProblemImageOptions,
 ): Promise<SolveProblemImageResult> {
-  const imageSizePx = options.imageSizePx ?? 1024
-  const viaDiameterMm = options.viaDiameterMm ?? 0.3
+  const imageSizePx = options.imageSizePx ?? IMAGE_SIZE_PX
+  const viaDiameterMm = options.viaDiameterMm ?? VIA_DIAMETER_MM
   const solver = new HighDensitySolverA01({
     nodeWithPortPoints: problem.nodeWithPortPoints,
-    cellSizeMm: options.cellSizeMm ?? 0.1,
+    cellSizeMm: options.cellSizeMm ?? CELL_SIZE_MM,
     viaDiameter: viaDiameterMm,
-    traceThickness: options.traceThicknessMm ?? 0.12,
-    traceMargin: options.traceMarginMm ?? 0.05,
+    traceThickness: options.traceThicknessMm ?? TRACE_THICKNESS_MM,
+    traceMargin: options.traceMarginMm ?? TRACE_MARGIN_MM,
     hyperParameters: {
       shuffleSeed: hashSeed(problem.problemId),
     },
@@ -173,10 +180,10 @@ export async function solveProblemToImageArtifacts(
 
   const pairedSolver = new HighDensitySolverA01({
     nodeWithPortPoints: problem.nodeWithPortPoints,
-    cellSizeMm: options.cellSizeMm ?? 0.1,
+    cellSizeMm: options.cellSizeMm ?? CELL_SIZE_MM,
     viaDiameter: viaDiameterMm,
-    traceThickness: options.traceThicknessMm ?? 0.12,
-    traceMargin: options.traceMarginMm ?? 0.05,
+    traceThickness: options.traceThicknessMm ?? TRACE_THICKNESS_MM,
+    traceMargin: options.traceMarginMm ?? TRACE_MARGIN_MM,
   }) as RuntimeSolver
   pairedSolver.setup()
 
