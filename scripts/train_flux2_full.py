@@ -45,10 +45,10 @@ image = modal.Image.debian_slim(python_version="3.10").pip_install(
     "wandb==0.17.6",
 )
 
-# Latest diffusers SHA that includes Klein img2img training support.
-# This is the commit that introduced train_dreambooth_lora_flux2_klein_img2img.py
-# for proper paired image-to-image fine-tuning.
-GIT_SHA = "61f175660a8ac54f1470a74a810e6c38fb4795d5"
+# Diffusers SHA: "Support Flux Klein peft (fal) lora format" (2026-02-21).
+# Includes Klein img2img training script + fal LoRA format fix.
+# Intentionally before the transformers v5 migration (2026-02-24) for stability.
+GIT_SHA = "a80b19218b4bd4faf2d6d8c428dcf1ae6f11e43d"
 
 image = (
     image.apt_install("git")
