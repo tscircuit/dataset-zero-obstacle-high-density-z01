@@ -1,7 +1,0 @@
-name = "dataset-zero-obstacle-generator"
-main = "src/worker.ts"
-compatibility_date = "2026-02-25"
-
-[[kv_namespaces]]
-binding = "SAMPLE_CACHE"
-id = "603eec1bab8e4df184e1aa5185a9ad15"
