@@ -1,6 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import { Resvg } from "@resvg/resvg-js"
 import {
   type HighDensityIntraNodeRoute,
   HighDensitySolverA01,
@@ -10,62 +7,47 @@ import {
   getBounds,
   getSvgFromGraphicsObject,
 } from "graphics-debug"
-
-import type {
-  BoundaryConnectionPair,
-  GeneratedProblem,
+import {
+  type BoundaryConnectionPair,
+  generateProblem,
 } from "./generate-problem.ts"
 
 const GRAPHICS_PADDING_PX = 40
 
-export type DatasetRow = {
-  boundary_connection_pairs: BoundaryConnectionPair[]
-  connection_pair_image: string
-  routed_image: string
-  routed_paths: HighDensityIntraNodeRoute[]
-}
-
-export type SolveProblemOptions = {
-  outputDir: string
-  imageSizePx?: number
+export type GenerateSampleInput = {
+  problemId: string
+  seed: number
+  pairCount?: number
+  minPointSeparationMm?: number
   cellSizeMm?: number
   viaDiameterMm?: number
   traceThicknessMm?: number
   traceMarginMm?: number
+  imageSizePx?: number
+  maxSolveAttempts?: number
 }
 
-export type SolveProblemImageOptions = Omit<SolveProblemOptions, "outputDir">
-
-export type SolveProblemImageArtifacts = {
+export type GeneratedSample = {
   boundary_connection_pairs: BoundaryConnectionPair[]
   routed_paths: HighDensityIntraNodeRoute[]
   connection_pair_svg: string
   routed_svg: string
-  connection_pair_png: Uint8Array
-  routed_png: Uint8Array
 }
 
-export type SolveProblemImageResult =
-  | {
-      ok: true
-      artifacts: SolveProblemImageArtifacts
-    }
-  | {
-      ok: false
-      reason: string
-      error?: unknown
-    }
+export type GenerateSampleSuccess = {
+  ok: true
+  sample: GeneratedSample
+  usedSeed: number
+  attempts: number
+}
 
-export type SolveProblemResult =
-  | {
-      ok: true
-      row: DatasetRow
-    }
-  | {
-      ok: false
-      reason: string
-      error?: unknown
-    }
+export type GenerateSampleFailure = {
+  ok: false
+  reason: string
+  attempts: number
+}
+
+export type GenerateSampleResult = GenerateSampleSuccess | GenerateSampleFailure
 
 type RuntimeSolver = HighDensitySolverA01 & {
   solve: () => void
@@ -75,195 +57,130 @@ type RuntimeSolver = HighDensitySolverA01 & {
   error: unknown
 }
 
-export async function solveProblem(
-  problem: GeneratedProblem,
-  options: SolveProblemOptions,
-): Promise<SolveProblemResult> {
-  const solved = await solveProblemToImageArtifacts(problem, options)
-  if (!solved.ok) {
-    return solved
+export async function generateSample(
+  input: GenerateSampleInput,
+): Promise<GenerateSampleResult> {
+  const maxSolveAttempts = input.maxSolveAttempts ?? 24
+  const imageSizePx = input.imageSizePx ?? 1024
+  const viaDiameterMm = input.viaDiameterMm ?? 0.61
+
+  for (let attempt = 1; attempt <= maxSolveAttempts; attempt += 1) {
+    const usedSeed = input.seed + attempt - 1
+    const problem = generateProblem({
+      problemId: input.problemId,
+      seed: usedSeed,
+      pairCount: input.pairCount,
+      minPointSeparationMm: input.minPointSeparationMm,
+    })
+
+    const solver = new HighDensitySolverA01({
+      nodeWithPortPoints: problem.nodeWithPortPoints,
+      cellSizeMm: input.cellSizeMm ?? 0.1,
+      viaDiameter: viaDiameterMm,
+      traceThickness: input.traceThicknessMm ?? 0.15,
+      traceMargin: input.traceMarginMm ?? 0.1,
+      hyperParameters: {
+        shuffleSeed: hashSeed(problem.problemId),
+      },
+    }) as RuntimeSolver
+
+    try {
+      solver.solve()
+    } catch {
+      continue
+    }
+
+    if (solver.failed || !solver.solved) {
+      continue
+    }
+
+    const routedPaths = solver.getOutput()
+    if (routedPaths.length !== problem.boundaryConnectionPairs.length) {
+      continue
+    }
+
+    const pairedSolver = new HighDensitySolverA01({
+      nodeWithPortPoints: problem.nodeWithPortPoints,
+      cellSizeMm: input.cellSizeMm ?? 0.1,
+      viaDiameter: viaDiameterMm,
+      traceThickness: input.traceThicknessMm ?? 0.15,
+      traceMargin: input.traceMarginMm ?? 0.1,
+    }) as RuntimeSolver
+    pairedSolver.setup()
+
+    const connectionPairPointRadiusPx = mmToImagePx({
+      lengthMm: viaDiameterMm / 2,
+      imageSizePx,
+      boardWidthMm: problem.nodeWithPortPoints.width,
+      boardHeightMm: problem.nodeWithPortPoints.height,
+    })
+    const connectionPairStrokeWidthPx = mmToImagePx({
+      lengthMm: viaDiameterMm / 2,
+      imageSizePx,
+      boardWidthMm: problem.nodeWithPortPoints.width,
+      boardHeightMm: problem.nodeWithPortPoints.height,
+    })
+    const netStrokeColorOffset =
+      hashSeed(`${problem.problemId}:net-color-offset`) %
+      Math.max(problem.boundaryConnectionPairs.length, 1)
+
+    const inputGraphics = withBoardOutline(
+      pairedSolver.visualize(),
+      problem.nodeWithPortPoints.center,
+      problem.nodeWithPortPoints.width,
+      problem.nodeWithPortPoints.height,
+    )
+
+    const routedGraphics = withBoardOutline(
+      solver.visualize(),
+      problem.nodeWithPortPoints.center,
+      problem.nodeWithPortPoints.width,
+      problem.nodeWithPortPoints.height,
+    )
+
+    const connectionPairSvg = renderGraphicsSvg({
+      graphics: inputGraphics,
+      center: problem.nodeWithPortPoints.center,
+      width: problem.nodeWithPortPoints.width,
+      height: problem.nodeWithPortPoints.height,
+      sizePx: imageSizePx,
+      pointRadiusPx: connectionPairPointRadiusPx,
+      netStrokeColorOffset,
+      netStrokeWidthPx: connectionPairStrokeWidthPx,
+    })
+
+    const routedSvg = renderGraphicsSvg({
+      graphics: routedGraphics,
+      center: problem.nodeWithPortPoints.center,
+      width: problem.nodeWithPortPoints.width,
+      height: problem.nodeWithPortPoints.height,
+      sizePx: imageSizePx,
+      pointRadiusPx: connectionPairPointRadiusPx,
+      netStrokeColorOffset,
+      netStrokeWidthPx: connectionPairStrokeWidthPx,
+    })
+
+    return {
+      ok: true,
+      sample: {
+        boundary_connection_pairs: problem.boundaryConnectionPairs,
+        routed_paths: routedPaths,
+        connection_pair_svg: connectionPairSvg,
+        routed_svg: routedSvg,
+      },
+      usedSeed,
+      attempts: attempt,
+    }
   }
-
-  const imagesDir = join(options.outputDir, "images")
-  const connectionPairImagePath = join(
-    imagesDir,
-    "connection-pairs",
-    `${problem.problemId}.png`,
-  )
-  const routedImagePath = join(imagesDir, "routed", `${problem.problemId}.png`)
-
-  await mkdir(dirname(connectionPairImagePath), { recursive: true })
-  await writeFile(
-    connectionPairImagePath.replace(/\.png$/, ".svg"),
-    solved.artifacts.connection_pair_svg,
-    "utf8",
-  )
-  await writeFile(connectionPairImagePath, solved.artifacts.connection_pair_png)
-  await mkdir(dirname(routedImagePath), { recursive: true })
-  await writeFile(
-    routedImagePath.replace(/\.png$/, ".svg"),
-    solved.artifacts.routed_svg,
-    "utf8",
-  )
-  await writeFile(routedImagePath, solved.artifacts.routed_png)
 
   return {
-    ok: true,
-    row: {
-      boundary_connection_pairs: solved.artifacts.boundary_connection_pairs,
-      connection_pair_image: toPosixRelativePath(
-        options.outputDir,
-        connectionPairImagePath,
-      ),
-      routed_image: toPosixRelativePath(options.outputDir, routedImagePath),
-      routed_paths: solved.artifacts.routed_paths,
-    },
+    ok: false,
+    reason: `Unable to produce solved sample after ${maxSolveAttempts} attempts`,
+    attempts: maxSolveAttempts,
   }
 }
 
-export async function solveProblemToImageArtifacts(
-  problem: GeneratedProblem,
-  options: SolveProblemImageOptions,
-): Promise<SolveProblemImageResult> {
-  const imageSizePx = options.imageSizePx ?? 1024
-  const viaDiameterMm = options.viaDiameterMm ?? 0.3
-  const solver = new HighDensitySolverA01({
-    nodeWithPortPoints: problem.nodeWithPortPoints,
-    cellSizeMm: options.cellSizeMm ?? 0.1,
-    viaDiameter: viaDiameterMm,
-    traceThickness: options.traceThicknessMm ?? 0.12,
-    traceMargin: options.traceMarginMm ?? 0.05,
-    hyperParameters: {
-      shuffleSeed: hashSeed(problem.problemId),
-    },
-  }) as RuntimeSolver
-
-  try {
-    solver.solve()
-  } catch (error) {
-    return {
-      ok: false,
-      reason: "Solver threw while solving",
-      error,
-    }
-  }
-
-  if (solver.failed || !solver.solved) {
-    const errorMessage =
-      typeof solver.error === "string"
-        ? solver.error
-        : solver.error instanceof Error
-          ? solver.error.message
-          : null
-
-    return {
-      ok: false,
-      reason: errorMessage ?? "Solver did not finish with a solution",
-      error: solver.error,
-    }
-  }
-
-  const routedPaths = solver.getOutput()
-  if (routedPaths.length !== problem.boundaryConnectionPairs.length) {
-    return {
-      ok: false,
-      reason: `Incomplete route set (${routedPaths.length}/${problem.boundaryConnectionPairs.length})`,
-    }
-  }
-
-  const pairedSolver = new HighDensitySolverA01({
-    nodeWithPortPoints: problem.nodeWithPortPoints,
-    cellSizeMm: options.cellSizeMm ?? 0.1,
-    viaDiameter: viaDiameterMm,
-    traceThickness: options.traceThicknessMm ?? 0.12,
-    traceMargin: options.traceMarginMm ?? 0.05,
-  }) as RuntimeSolver
-  pairedSolver.setup()
-
-  const connectionPairPointRadiusPx = mmToImagePx({
-    lengthMm: viaDiameterMm / 2,
-    imageSizePx,
-    boardWidthMm: problem.nodeWithPortPoints.width,
-    boardHeightMm: problem.nodeWithPortPoints.height,
-  })
-  const connectionPairStrokeWidthPx = mmToImagePx({
-    lengthMm: viaDiameterMm / 2,
-    imageSizePx,
-    boardWidthMm: problem.nodeWithPortPoints.width,
-    boardHeightMm: problem.nodeWithPortPoints.height,
-  })
-  const netStrokeColorOffset =
-    hashSeed(`${problem.problemId}:net-color-offset`) %
-    Math.max(problem.boundaryConnectionPairs.length, 1)
-
-  const inputGraphics = withBoardOutline(
-    pairedSolver.visualize(),
-    problem.nodeWithPortPoints.center,
-    problem.nodeWithPortPoints.width,
-    problem.nodeWithPortPoints.height,
-  )
-
-  const routedGraphics = withBoardOutline(
-    solver.visualize(),
-    problem.nodeWithPortPoints.center,
-    problem.nodeWithPortPoints.width,
-    problem.nodeWithPortPoints.height,
-  )
-
-  const connectionPairImage = renderGraphicsImage({
-    graphics: inputGraphics,
-    center: problem.nodeWithPortPoints.center,
-    width: problem.nodeWithPortPoints.width,
-    height: problem.nodeWithPortPoints.height,
-    sizePx: imageSizePx,
-    pointRadiusPx: connectionPairPointRadiusPx,
-    netStrokeColorOffset,
-    netStrokeWidthPx: connectionPairStrokeWidthPx,
-  })
-
-  const routedImage = renderGraphicsImage({
-    graphics: routedGraphics,
-    center: problem.nodeWithPortPoints.center,
-    width: problem.nodeWithPortPoints.width,
-    height: problem.nodeWithPortPoints.height,
-    sizePx: imageSizePx,
-    pointRadiusPx: connectionPairPointRadiusPx,
-    netStrokeColorOffset,
-    netStrokeWidthPx: connectionPairStrokeWidthPx,
-  })
-
-  return {
-    ok: true,
-    artifacts: {
-      boundary_connection_pairs: problem.boundaryConnectionPairs,
-      routed_paths: routedPaths,
-      connection_pair_svg: connectionPairImage.svg,
-      routed_svg: routedImage.svg,
-      connection_pair_png: connectionPairImage.pngBytes,
-      routed_png: routedImage.pngBytes,
-    },
-  }
-}
-
-async function renderAndWriteGraphicsImage(params: {
-  graphics: GraphicsObject
-  center: { x: number; y: number }
-  width: number
-  height: number
-  pngFilePath: string
-  sizePx: number
-  pointRadiusPx?: number
-  netStrokeColorOffset?: number
-  netStrokeWidthPx?: number
-}): Promise<void> {
-  const rendered = renderGraphicsImage(params)
-  const svgPath = params.pngFilePath.replace(/\.png$/, ".svg")
-  await mkdir(dirname(params.pngFilePath), { recursive: true })
-  await writeFile(svgPath, rendered.svg, "utf8")
-  await writeFile(params.pngFilePath, rendered.pngBytes)
-}
-
-function renderGraphicsImage(params: {
+function renderGraphicsSvg(params: {
   graphics: GraphicsObject
   center: { x: number; y: number }
   width: number
@@ -272,7 +189,7 @@ function renderGraphicsImage(params: {
   pointRadiusPx?: number
   netStrokeColorOffset?: number
   netStrokeWidthPx?: number
-}): { svg: string; pngBytes: Uint8Array } {
+}): string {
   const {
     graphics,
     center,
@@ -302,7 +219,7 @@ function renderGraphicsImage(params: {
     })
   }
 
-  const croppedSvg = cropSvgToBoardRegion({
+  return cropSvgToBoardRegion({
     svg: rawSvg,
     graphics,
     center,
@@ -311,19 +228,6 @@ function renderGraphicsImage(params: {
     svgWidth: sizePx,
     svgHeight: sizePx,
   })
-
-  const resvg = new Resvg(croppedSvg, {
-    fitTo: {
-      mode: "width",
-      value: sizePx,
-    },
-  })
-  const pngBytes = new Uint8Array(resvg.render().asPng())
-
-  return {
-    svg: croppedSvg,
-    pngBytes,
-  }
 }
 
 function cropSvgToBoardRegion(params: {
@@ -383,14 +287,14 @@ function rewriteSvgViewport(
     outputHeight: number
   },
 ): string {
-  const { x, y, width, height, outputWidth, outputHeight } = params
+  const { x, y, width, height } = params
   const viewBox = `${x} ${y} ${width} ${height}`
 
   return svg
   // return svg
   //   .replace(/viewBox="[^"]*"/, `viewBox="${viewBox}"`)
-  //   .replace(/width="[^"]*"/, `width="${outputWidth}"`)
-  //   .replace(/height="[^"]*"/, `height="${outputHeight}"`)
+  //   .replace(/width="[^"]*"/, `width="${params.outputWidth}"`)
+  //   .replace(/height="[^"]*"/, `height="${params.outputHeight}`)
 }
 
 function createProjectionMatrix(params: {
@@ -461,24 +365,6 @@ function withBoardOutline(
       },
     ],
   }
-}
-
-function toPosixRelativePath(baseDir: string, absolutePath: string): string {
-  const withoutBase = absolutePath.startsWith(baseDir)
-    ? absolutePath.slice(baseDir.length + 1)
-    : absolutePath
-
-  return withoutBase.replaceAll("\\", "/")
-}
-
-function hashSeed(value: string): number {
-  let hash = 2166136261
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i)
-    hash = Math.imul(hash, 16777619)
-  }
-
-  return hash >>> 0
 }
 
 function mmToImagePx(params: {
@@ -593,4 +479,14 @@ function hueToRgb(p: number, q: number, tInput: number): number {
 function toHexChannel(value: number): string {
   const channel = Math.round(Math.max(0, Math.min(1, value)) * 255)
   return channel.toString(16).padStart(2, "0")
+}
+
+function hashSeed(value: string): number {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return hash >>> 0
 }
