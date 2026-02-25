@@ -64,7 +64,7 @@ if match:
         f"{indent}        with offload_models(text_encoding_pipeline, device=accelerator.device, offload=args.offload):\n"
         f"{indent}            prompt_embeds, text_ids = compute_text_embeddings(batch[\"prompts\"], text_encoding_pipeline)"
     )
-    code = code[:match.start()] + replacement + code[match.end():]
+    code = code[:line_start] + replacement + code[match.end():]
     print("  [precache-3] Replaced prompt_embeds_cache access with on-the-fly computation (with offload_models)")
 else:
     print("  [precache-3] WARNING: could not find prompt_embeds_cache access pattern")
