@@ -134,7 +134,7 @@ class TrainConfig(SharedConfig):
     # HuggingFace dataset with Lance format
     hf_dataset: str = "makeshifted/zero-obstacle-high-density-z01"
 
-    resolution: int = 512
+    resolution: int = 256
     train_batch_size: int = 1  # img2img pairs need more memory per sample
     gradient_accumulation_steps: int = 4  # effective batch size = 4
     learning_rate: float = 1e-6  # very low LR for full FT (prevents washed outputs)
@@ -177,6 +177,13 @@ def prepare_training_data(hf_dataset: str) -> str:
     for row in rows:
         cond_img = PILImage.open(io.BytesIO(row["input_image"])).convert("RGB")
         out_img = PILImage.open(io.BytesIO(row["output_image"])).convert("RGB")
+
+        # Resize to training resolution if needed
+        target_size = (256, 256)
+        if cond_img.size != target_size:
+            cond_img = cond_img.resize(target_size, PILImage.LANCZOS)
+        if out_img.size != target_size:
+            out_img = out_img.resize(target_size, PILImage.LANCZOS)
 
         cond_images.append(cond_img)
         output_images.append(out_img)

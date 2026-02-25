@@ -60,7 +60,8 @@ with image.imports():
 FULL_MODEL_DIR = "/model-full"
 FULL_OUTPUT_DIR = "/model-full/output"
 
-NUM_STEPS = 28
+# Klein base models are undistilled — use ~50 steps with CFG 4.0 for quality.
+NUM_STEPS = 50
 
 DEFAULT_INSTRUCTION = (
     "Route the traces between the color matched pins, using red for the top "
@@ -99,8 +100,8 @@ def _sse_generate(pipe, prompt, input_image, strength, seed):
                 strength=strength,
                 num_inference_steps=NUM_STEPS,
                 guidance_scale=4.0,
-                height=512,
-                width=512,
+                height=256,
+                width=256,
                 generator=generator,
                 callback_on_step_end=callback_on_step_end,
             ).images
@@ -173,7 +174,7 @@ class Inference:
         # Decode input image and resize to match training resolution
         input_bytes = base64.b64decode(input_b64)
         input_image = Image.open(io.BytesIO(input_bytes)).convert("RGB")
-        input_image = input_image.resize((512, 512))
+        input_image = input_image.resize((256, 256))
 
         print(
             f"Inference: instruction={instruction!r}, "
