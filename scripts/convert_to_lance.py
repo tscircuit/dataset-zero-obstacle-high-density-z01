@@ -42,16 +42,8 @@ RANDOM_SEED = 42
 schema = pa.schema(
     [
         pa.field("id", pa.string()),
-        pa.field(
-            "input_image",
-            pa.large_binary(),
-            metadata={"lance-encoding:blob": "true"},
-        ),
-        pa.field(
-            "output_image",
-            pa.large_binary(),
-            metadata={"lance-encoding:blob": "true"},
-        ),
+        pa.field("input_image", pa.large_binary()),
+        pa.field("output_image", pa.large_binary()),
         pa.field("edit_instruction", pa.string()),
     ]
 )
@@ -232,8 +224,8 @@ Lance dataset with the following columns:
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | string | Sample identifier (e.g. `sample-000001`) |
-| `input_image` | large_binary (blob) | Connection-pairs PNG |
-| `output_image` | large_binary (blob) | Routed PNG |
+| `input_image` | large_binary | Connection-pairs PNG |
+| `output_image` | large_binary | Routed PNG |
 | `edit_instruction` | string | The edit instruction |
 
 ## Splits
