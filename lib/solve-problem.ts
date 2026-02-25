@@ -118,6 +118,15 @@ export async function solveProblem(
     boardWidthMm: problem.nodeWithPortPoints.width,
     boardHeightMm: problem.nodeWithPortPoints.height,
   })
+  const connectionPairStrokeWidthPx = mmToImagePx({
+    lengthMm: viaDiameterMm / 2,
+    imageSizePx,
+    boardWidthMm: problem.nodeWithPortPoints.width,
+    boardHeightMm: problem.nodeWithPortPoints.height,
+  })
+  const netStrokeColorOffset =
+    hashSeed(`${problem.problemId}:net-color-offset`) %
+    Math.max(problem.boundaryConnectionPairs.length, 1)
 
   const inputGraphics = withBoardOutline(
     pairedSolver.visualize(),
@@ -149,6 +158,8 @@ export async function solveProblem(
     pngFilePath: connectionPairImagePath,
     sizePx: imageSizePx,
     pointRadiusPx: connectionPairPointRadiusPx,
+    netStrokeColorOffset,
+    netStrokeWidthPx: connectionPairStrokeWidthPx,
   })
 
   await renderAndWriteGraphicsImage({
@@ -159,6 +170,8 @@ export async function solveProblem(
     pngFilePath: routedImagePath,
     sizePx: imageSizePx,
     pointRadiusPx: connectionPairPointRadiusPx,
+    netStrokeColorOffset,
+    netStrokeWidthPx: connectionPairStrokeWidthPx,
   })
 
   return {
@@ -183,6 +196,8 @@ async function renderAndWriteGraphicsImage(params: {
   pngFilePath: string
   sizePx: number
   pointRadiusPx?: number
+  netStrokeColorOffset?: number
+  netStrokeWidthPx?: number
 }): Promise<void> {
   const {
     graphics,
@@ -192,6 +207,8 @@ async function renderAndWriteGraphicsImage(params: {
     pngFilePath,
     sizePx,
     pointRadiusPx,
+    netStrokeColorOffset,
+    netStrokeWidthPx,
   } = params
 
   let rawSvg = getSvgFromGraphicsObject(graphics, {
@@ -203,6 +220,13 @@ async function renderAndWriteGraphicsImage(params: {
 
   if (pointRadiusPx !== undefined) {
     rawSvg = setPointCircleRadius(rawSvg, pointRadiusPx)
+  }
+
+  if (netStrokeColorOffset !== undefined) {
+    rawSvg = setPointCircleNetStroke(rawSvg, {
+      connectionIndexOffset: netStrokeColorOffset,
+      strokeWidthPx: netStrokeWidthPx ?? Math.max(1, sizePx * 0.003),
+    })
   }
 
   const croppedSvg = cropSvgToBoardRegion({
@@ -409,4 +433,91 @@ function setPointCircleRadius(svg: string, radiusPx: number): string {
 
     return circleTag.replace(/\br="[^"]*"/, `r="${radiusValue}"`)
   })
+}
+
+function setPointCircleNetStroke(
+  svg: string,
+  params: {
+    connectionIndexOffset: number
+    strokeWidthPx: number
+  },
+): string {
+  const { connectionIndexOffset, strokeWidthPx } = params
+  const strokeWidthValue = Number(strokeWidthPx.toFixed(3)).toString()
+
+  return svg.replace(/<circle\b[^>]*>/g, (circleTag) => {
+    if (!circleTag.includes('data-type="point"')) {
+      return circleTag
+    }
+
+    const labelMatch = /\bdata-label="([^"]+)"/.exec(circleTag)
+    const label = labelMatch?.[1] ?? ""
+    const connectionIndex = getConnectionIndex(label)
+    if (connectionIndex === undefined) {
+      return circleTag
+    }
+    const netColor = getNetColor(connectionIndex + connectionIndexOffset)
+
+    let updatedTag = setSvgAttribute(circleTag, "stroke", netColor)
+    updatedTag = setSvgAttribute(updatedTag, "stroke-width", strokeWidthValue)
+    return updatedTag
+  })
+}
+
+function getConnectionIndex(connectionLabel: string): number | undefined {
+  const suffixMatch = /_(\d+)$/.exec(connectionLabel)
+  if (suffixMatch) {
+    return Number.parseInt(suffixMatch[1] ?? "0", 10)
+  }
+
+  return undefined
+}
+
+function getNetColor(netIndex: number): string {
+  const normalizedIndex = Number.isFinite(netIndex) ? netIndex : 0
+  const hue = (((normalizedIndex * 137.508) % 360) + 360) % 360
+  return hslToHex(hue, 0.85, 0.4)
+}
+
+function setSvgAttribute(tag: string, attr: string, value: string): string {
+  const attrPattern = new RegExp(`\\b${attr}="[^"]*"`)
+  if (attrPattern.test(tag)) {
+    return tag.replace(attrPattern, `${attr}="${value}"`)
+  }
+
+  return tag.replace(/\/>$/, ` ${attr}="${value}"/>`)
+}
+
+function hslToHex(
+  hueDeg: number,
+  saturation: number,
+  lightness: number,
+): string {
+  const h = (((hueDeg % 360) + 360) % 360) / 360
+  const s = Math.max(0, Math.min(1, saturation))
+  const l = Math.max(0, Math.min(1, lightness))
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+
+  const r = hueToRgb(p, q, h + 1 / 3)
+  const g = hueToRgb(p, q, h)
+  const b = hueToRgb(p, q, h - 1 / 3)
+
+  return `#${toHexChannel(r)}${toHexChannel(g)}${toHexChannel(b)}`
+}
+
+function hueToRgb(p: number, q: number, tInput: number): number {
+  let t = tInput
+  if (t < 0) t += 1
+  if (t > 1) t -= 1
+  if (t < 1 / 6) return p + (q - p) * 6 * t
+  if (t < 1 / 2) return q
+  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+  return p
+}
+
+function toHexChannel(value: number): string {
+  const channel = Math.round(Math.max(0, Math.min(1, value)) * 255)
+  return channel.toString(16).padStart(2, "0")
 }

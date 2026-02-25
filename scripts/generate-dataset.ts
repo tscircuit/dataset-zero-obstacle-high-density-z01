@@ -1,7 +1,10 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { generateProblem } from "../lib/generate-problem.ts"
+import {
+  type GeneratedProblem,
+  generateProblem,
+} from "../lib/generate-problem.ts"
 import { solveProblem } from "../lib/solve-problem.ts"
 
 const sampleCount = parseSampleCount(process.argv[2])
@@ -11,6 +14,7 @@ const pairCountBySampleIndex = new Map<number, number>()
 
 const MIN_CONNECTIONS = 2
 const MAX_CONNECTIONS = 10
+const VIA_DIAMETER_MM = 0.61
 
 await mkdir(outputDir, { recursive: true })
 await mkdir(join(outputDir, "images", "connection-pairs"), { recursive: true })
@@ -29,19 +33,32 @@ while (solvedCount < sampleCount && attempts < maxAttempts) {
   const sampleIndex = solvedCount + 1
   const pairCount = getOrCreatePairCount(sampleIndex)
   const problemId = `sample-${sampleIndex.toString().padStart(6, "0")}`
-  const problem = generateProblem({
-    problemId,
-    seed: 1109 + attempts,
-    pairCount,
-  })
+  let problem: GeneratedProblem
+  try {
+    problem = generateProblem({
+      problemId,
+      seed: 1109 + attempts,
+      pairCount,
+      minPointSeparationMm: VIA_DIAMETER_MM,
+    })
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message : "Failed to generate problem"
+    failures.push({
+      problemId,
+      reason,
+    })
+    console.warn(`retry ${problemId}: ${reason}`)
+    continue
+  }
 
   const result = await solveProblem(problem, {
     outputDir,
     imageSizePx: 1024,
     cellSizeMm: 0.1,
-    viaDiameterMm: 0.3,
-    traceThicknessMm: 0.12,
-    traceMarginMm: 0.06,
+    viaDiameterMm: VIA_DIAMETER_MM,
+    traceThicknessMm: 0.15,
+    traceMarginMm: 0.1,
   })
 
   if (!result.ok) {

@@ -26,6 +26,7 @@ export type GenerateProblemOptions = {
   minPairCount?: number
   maxPairCount?: number
   availableZ?: number[]
+  minPointSeparationMm?: number
   seed?: number
 }
 
@@ -37,6 +38,7 @@ export function generateProblem(
   const minPairCount = options.minPairCount ?? 2
   const maxPairCount = options.maxPairCount ?? 10
   const availableZ = options.availableZ ?? [0, 1]
+  const minPointSeparationMm = options.minPointSeparationMm ?? 0.3
   const pairCount =
     options.pairCount ??
     randomInt(createRng(options.seed ?? Date.now()), minPairCount, maxPairCount)
@@ -47,6 +49,7 @@ export function generateProblem(
   const halfHeight = heightMm / 2
 
   const usedBoundarySlots = new Set<string>()
+  const usedBoundaryPoints: Array<{ x: number; y: number }> = []
   const boundaryConnectionPairs: BoundaryConnectionPair[] = []
 
   for (let i = 0; i < pairCount; i += 1) {
@@ -58,6 +61,8 @@ export function generateProblem(
       halfWidth,
       halfHeight,
       usedBoundarySlots,
+      usedBoundaryPoints,
+      minPointSeparationMm,
       availableZ,
       connectionName,
       side: startSide,
@@ -69,6 +74,8 @@ export function generateProblem(
       halfWidth,
       halfHeight,
       usedBoundarySlots,
+      usedBoundaryPoints,
+      minPointSeparationMm,
       availableZ,
       connectionName,
       side: endSide,
@@ -105,6 +112,8 @@ function createUniqueBoundaryEndpoint(params: {
   halfWidth: number
   halfHeight: number
   usedBoundarySlots: Set<string>
+  usedBoundaryPoints: Array<{ x: number; y: number }>
+  minPointSeparationMm: number
   availableZ: number[]
   connectionName: string
   side: BoundarySide
@@ -114,6 +123,8 @@ function createUniqueBoundaryEndpoint(params: {
     halfWidth,
     halfHeight,
     usedBoundarySlots,
+    usedBoundaryPoints,
+    minPointSeparationMm,
     availableZ,
     connectionName,
   } = params
@@ -131,8 +142,16 @@ function createUniqueBoundaryEndpoint(params: {
     })
 
     const boundarySlotKey = getBoundarySlotKey(endpoint)
-    if (!usedBoundarySlots.has(boundarySlotKey)) {
+    if (
+      !usedBoundarySlots.has(boundarySlotKey) &&
+      isFarEnoughFromUsedPoints(
+        endpoint,
+        usedBoundaryPoints,
+        minPointSeparationMm,
+      )
+    ) {
       usedBoundarySlots.add(boundarySlotKey)
+      usedBoundaryPoints.push({ x: endpoint.x, y: endpoint.y })
       return endpoint
     }
 
@@ -140,6 +159,23 @@ function createUniqueBoundaryEndpoint(params: {
   }
 
   throw new Error("Unable to generate unique boundary endpoint after 200 tries")
+}
+
+function isFarEnoughFromUsedPoints(
+  endpoint: { x: number; y: number },
+  usedBoundaryPoints: Array<{ x: number; y: number }>,
+  minPointSeparationMm: number,
+): boolean {
+  const minDistanceSquared = minPointSeparationMm * minPointSeparationMm
+  for (const usedPoint of usedBoundaryPoints) {
+    const dx = endpoint.x - usedPoint.x
+    const dy = endpoint.y - usedPoint.y
+    if (dx * dx + dy * dy < minDistanceSquared) {
+      return false
+    }
+  }
+
+  return true
 }
 
 function createBoundaryEndpoint(params: {
