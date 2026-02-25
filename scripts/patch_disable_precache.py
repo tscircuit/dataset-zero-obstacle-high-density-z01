@@ -59,7 +59,7 @@ if match:
         else:
             break
     replacement = (
-        f"if train_dataset.custom_instance_prompts:\n"
+        f"{indent}if train_dataset.custom_instance_prompts:\n"
         f"{indent}    with torch.no_grad():\n"
         f"{indent}        with offload_models(text_encoding_pipeline, device=accelerator.device, offload=args.offload):\n"
         f"{indent}            prompt_embeds, text_ids = compute_text_embeddings(batch[\"prompts\"], text_encoding_pipeline)"

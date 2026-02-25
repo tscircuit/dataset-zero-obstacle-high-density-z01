@@ -2,11 +2,20 @@
 #
 # FLUX.2 Klein 4B FULL fine-tuning for PCB routing image-to-image editing.
 #
-# Trains the model on (edit_instruction, routed_image) pairs from the Lance
-# dataset on HuggingFace.  At inference time the model is used in img2img mode
-# with the connection-pairs image as the starting image.
+# Uses the dedicated Klein img2img training script from diffusers which
+# properly handles paired (input_image, output_image, instruction) triplets.
+# The script is patched to do full fine-tuning instead of LoRA.
+#
+# At inference time the model is used in img2img mode: pass a connection-pairs
+# image and the edit instruction, get back a routed image.
 #
 # Adapted from morphmaker.ai/morphmaker_train_flux2_full.py
+#
+# Training tips incorporated from PixelWave FLUX.1-dev community results:
+#   - Low learning rate (1e-6 range) to avoid fuzzy/washed outputs
+#   - constant_with_warmup scheduler for stability
+#   - FP8 training for memory efficiency
+#   - Gradient checkpointing
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,8 +45,10 @@ image = modal.Image.debian_slim(python_version="3.10").pip_install(
     "wandb==0.17.6",
 )
 
-# Fetch diffusers training scripts from GitHub (same SHA as morphmaker.ai)
-GIT_SHA = "a80b19218b4bd4faf2d6d8c428dcf1ae6f11e43d"
+# Latest diffusers SHA that includes Klein img2img training support.
+# This is the commit that introduced train_dreambooth_lora_flux2_klein_img2img.py
+# for proper paired image-to-image fine-tuning.
+GIT_SHA = "61f175660a8ac54f1470a74a810e6c38fb4795d5"
 
 image = (
     image.apt_install("git")
@@ -47,7 +58,7 @@ image = (
         f"cd /root && git fetch --depth=1 origin {GIT_SHA} && git checkout {GIT_SHA}",
         "cd /root && pip install -e .",
     )
-    # Add patch scripts and apply them
+    # Add patch scripts and apply them to the Klein img2img training script
     .add_local_file(
         Path(__file__).parent / "patch_klein_full_ft.py",
         remote_path="/root/patch_klein_full_ft.py",
@@ -59,13 +70,13 @@ image = (
         copy=True,
     )
     .run_commands(
-        # First: convert LoRA script to full fine-tuning
+        # Convert the img2img LoRA script to full fine-tuning
         "python3 /root/patch_klein_full_ft.py "
-        "/root/examples/dreambooth/train_dreambooth_lora_flux2_klein.py "
-        "/root/examples/dreambooth/train_dreambooth_flux2_klein_full.py",
-        # Then: disable pre-caching to avoid OOM
+        "/root/examples/dreambooth/train_dreambooth_lora_flux2_klein_img2img.py "
+        "/root/examples/dreambooth/train_dreambooth_flux2_klein_img2img_full.py",
+        # Disable pre-caching to avoid OOM
         "python3 /root/patch_disable_precache.py "
-        "/root/examples/dreambooth/train_dreambooth_flux2_klein_full.py",
+        "/root/examples/dreambooth/train_dreambooth_flux2_klein_img2img_full.py",
     )
 )
 
@@ -106,66 +117,86 @@ def download_models(config):
         local_dir=MODEL_DIR,
         ignore_patterns=["*.pt", "*.bin"],
     )
+    volume.commit()
 
 
 @dataclass
 class TrainConfig(SharedConfig):
-    """Configuration for full fine-tuning on PCB routing data."""
+    """Configuration for full fine-tuning on PCB routing paired image data.
+
+    Hyperparameters informed by community results on Flux fine-tuning:
+    - Very low LR (1e-6) to prevent fuzzy/washed outputs with full FT
+    - constant_with_warmup scheduler for stable training on small datasets
+    - FP8 training to reduce VRAM usage
+    - Gradient checkpointing for memory efficiency
+    """
 
     # HuggingFace dataset with Lance format
     hf_dataset: str = "makeshifted/zero-obstacle-high-density-z01"
 
     resolution: int = 512
-    train_batch_size: int = 2
-    gradient_accumulation_steps: int = 2  # effective batch size = 4
-    learning_rate: float = 1e-5  # lower LR for full fine-tuning
-    lr_scheduler: str = "cosine"
-    lr_warmup_steps: int = 50
-    # 71 train images / effective_batch 4 = ~18 steps/epoch, * 150 epochs ≈ 2700
-    max_train_steps: int = 2700
+    train_batch_size: int = 1  # img2img pairs need more memory per sample
+    gradient_accumulation_steps: int = 4  # effective batch size = 4
+    learning_rate: float = 1e-6  # very low LR for full FT (prevents washed outputs)
+    lr_scheduler: str = "constant_with_warmup"
+    lr_warmup_steps: int = 100
+    # 71 train images / effective_batch 4 = ~18 steps/epoch, * 300 epochs ≈ 5400
+    max_train_steps: int = 5400
     checkpointing_steps: int = 500
     seed: int = 42
 
 
 def prepare_training_data(hf_dataset: str) -> str:
     """Download the Lance dataset from HuggingFace and convert to a local
-    imagefolder that the DreamBooth training script can consume.
+    HuggingFace datasets format with paired images that the Klein img2img
+    training script can consume.
+
+    The img2img script expects columns:
+        - cond_image: the input/condition image (connection-pairs)
+        - output_image: the target image (routed)
+        - instruction: the edit instruction text
 
     Returns the path to the local training data directory.
     """
     import io
-    import json
     import os
 
-    import lance
-    from PIL import Image
-
-    local_dir = "/tmp/pcbrouter_train"
-    os.makedirs(local_dir, exist_ok=True)
+    import lance as lance_lib
+    from datasets import Dataset, Image
+    from PIL import Image as PILImage
 
     print(f"Loading Lance dataset from hf://datasets/{hf_dataset}/data/train.lance")
-    ds = lance.dataset(f"hf://datasets/{hf_dataset}/data/train.lance")
+    ds = lance_lib.dataset(f"hf://datasets/{hf_dataset}/data/train.lance")
     rows = ds.to_table().to_pylist()
     print(f"Loaded {len(rows)} training samples")
 
-    metadata = []
+    cond_images = []
+    output_images = []
+    instructions = []
+
     for row in rows:
-        sample_id = row["id"]
-        instruction = row["edit_instruction"]
+        cond_img = PILImage.open(io.BytesIO(row["input_image"])).convert("RGB")
+        out_img = PILImage.open(io.BytesIO(row["output_image"])).convert("RGB")
 
-        # Save the OUTPUT (routed) image — this is what we train the model to generate
-        img = Image.open(io.BytesIO(row["output_image"]))
-        img_path = f"{sample_id}.png"
-        img.save(os.path.join(local_dir, img_path))
+        cond_images.append(cond_img)
+        output_images.append(out_img)
+        instructions.append(row["edit_instruction"])
 
-        metadata.append({"file_name": img_path, "text": instruction})
+    hf_ds = Dataset.from_dict(
+        {
+            "cond_image": cond_images,
+            "output_image": output_images,
+            "instruction": instructions,
+        }
+    )
+    hf_ds = hf_ds.cast_column("cond_image", Image())
+    hf_ds = hf_ds.cast_column("output_image", Image())
 
-    # Write metadata.jsonl for the imagefolder loader
-    with open(os.path.join(local_dir, "metadata.jsonl"), "w") as f:
-        for entry in metadata:
-            f.write(json.dumps(entry) + "\n")
+    local_dir = "/tmp/pcbrouter_train"
+    os.makedirs(local_dir, exist_ok=True)
+    hf_ds.save_to_disk(local_dir)
 
-    print(f"Prepared {len(metadata)} images in {local_dir}")
+    print(f"Prepared {len(rows)} paired samples in {local_dir}")
     return local_dir
 
 
@@ -192,7 +223,7 @@ def train(config):
 
     write_basic_config(mixed_precision="bf16")
 
-    # Convert Lance dataset to local imagefolder format
+    # Convert Lance dataset to local HuggingFace datasets format with paired images
     local_data_dir = prepare_training_data(config.hf_dataset)
 
     def _exec_subprocess(cmd: list[str]):
@@ -207,21 +238,23 @@ def train(config):
                 line_str = line.decode()
                 print(f"{line_str}", end="")
 
-        if exitcode := process.wait() != 0:
+        exitcode = process.wait()
+        if exitcode != 0:
             raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
 
-    print("launching FLUX.2 Klein FULL fine-tuning for PCB routing")
+    print("launching FLUX.2 Klein img2img FULL fine-tuning for PCB routing")
     _exec_subprocess(
         [
             "accelerate",
             "launch",
-            "examples/dreambooth/train_dreambooth_flux2_klein_full.py",
+            "examples/dreambooth/train_dreambooth_flux2_klein_img2img_full.py",
             "--mixed_precision=bf16",
             f"--pretrained_model_name_or_path={MODEL_DIR}",
             f"--dataset_name={local_data_dir}",
             f"--output_dir={OUTPUT_DIR}",
-            "--image_column=image",
-            "--caption_column=text",
+            "--image_column=output_image",
+            "--cond_image_column=cond_image",
+            "--caption_column=instruction",
             "--instance_prompt=Route the traces between the color matched pins",
             f"--resolution={config.resolution}",
             f"--train_batch_size={config.train_batch_size}",
@@ -241,11 +274,11 @@ def train(config):
 
 @app.local_entrypoint()
 def run(
-    max_train_steps: int = 2700,
+    max_train_steps: int = 5400,
 ):
     print("downloading FLUX.2 Klein base model")
-    download_models.remote(SharedConfig())
-    print("starting FULL fine-tuning (A100-80GB)")
+    download_models.remote(SharedConfig())  # .remote() blocks until complete
+    print("starting img2img FULL fine-tuning (A100-80GB)")
     config = TrainConfig(max_train_steps=max_train_steps)
     train.remote(config)
     print("training finished")

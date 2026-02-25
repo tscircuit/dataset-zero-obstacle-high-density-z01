@@ -13,7 +13,7 @@ import modal
 
 app = modal.App("pcbrouter-flux2")
 
-GIT_SHA = "a80b19218b4bd4faf2d6d8c428dcf1ae6f11e43d"
+GIT_SHA = "61f175660a8ac54f1470a74a810e6c38fb4795d5"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -154,14 +154,24 @@ class Inference:
             seed:        (optional) RNG seed for reproducibility
         """
         body = await request.json()
+
+        if "input_image" not in body:
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=400,
+                content={"error": "input_image is required"},
+            )
+
         input_b64 = body["input_image"]
         instruction = body.get("instruction", DEFAULT_INSTRUCTION)
-        strength = float(body.get("strength", 0.75))
+        strength = min(max(float(body.get("strength", 0.75)), 0.0), 1.0)
         seed = body.get("seed")
 
-        # Decode input image
+        # Decode input image and resize to match training resolution
         input_bytes = base64.b64decode(input_b64)
         input_image = Image.open(io.BytesIO(input_bytes)).convert("RGB")
+        input_image = input_image.resize((512, 512))
 
         print(
             f"Inference: instruction={instruction!r}, "
