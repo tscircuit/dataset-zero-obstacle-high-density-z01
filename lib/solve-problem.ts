@@ -100,18 +100,8 @@ export async function solveProblem(
   const routedImagePath = join(imagesDir, "routed", `${problem.problemId}.png`)
 
   await mkdir(dirname(connectionPairImagePath), { recursive: true })
-  await writeFile(
-    connectionPairImagePath.replace(/\.png$/, ".svg"),
-    solved.artifacts.connection_pair_svg,
-    "utf8",
-  )
   await writeFile(connectionPairImagePath, solved.artifacts.connection_pair_png)
   await mkdir(dirname(routedImagePath), { recursive: true })
-  await writeFile(
-    routedImagePath.replace(/\.png$/, ".svg"),
-    solved.artifacts.routed_svg,
-    "utf8",
-  )
   await writeFile(routedImagePath, solved.artifacts.routed_png)
 
   return {
