@@ -1,8 +1,7 @@
 # modal deploy scripts/deploy_api.py
 #
 # Serves the fine-tuned FLUX.2 Klein 4B model for PCB routing inference.
-# Includes a test page at /test to visually compare model outputs against
-# ground truth during training.
+# Single web endpoint with routes: /route (POST), /status (GET), / (test page).
 #
 # Adapted from morphmaker.ai/morphmaker_api_flux2.py
 
@@ -10,14 +9,16 @@ import io
 import random
 
 import modal
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-app = modal.App("pcbrouter-flux2")
+modal_app = modal.App("pcbrouter-flux2")
 
 # Diffusers SHA: "Support Flux Klein peft (fal) lora format" (2026-02-21).
 # Before the transformers v5 migration (2026-02-24) for stability.
 GIT_SHA = "a80b19218b4bd4faf2d6d8c428dcf1ae6f11e43d"
 
-image = (
+modal_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
         "accelerate==0.34.2",
@@ -46,19 +47,6 @@ image = (
     )
 )
 
-import base64
-import json
-import queue
-import threading
-
-from fastapi import Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-
-with image.imports():
-    import diffusers
-    import torch
-    from PIL import Image
-
 FULL_MODEL_DIR = "/model-full"
 FULL_OUTPUT_DIR = "/model-full/output"
 
@@ -75,68 +63,19 @@ DEFAULT_INSTRUCTION = (
 TEST_SAMPLE_INDICES = [0, 500, 1000, 2000, 3000, 4000]
 HF_DATASET = "tscircuit/zero-obstacle-high-density-z01"
 
-
-def _sse_generate(pipe, prompt, input_image, seed):
-    """Run img2img pipeline in a thread, yield SSE events with progress."""
-    seed = seed if seed is not None else random.randint(0, 2**32 - 1)
-    generator = torch.Generator("cuda").manual_seed(seed)
-
-    q = queue.Queue()
-
-    def callback_on_step_end(pipe_self, step, timestep, callback_kwargs):
-        progress = (step + 1) / NUM_STEPS
-        q.put(
-            {
-                "stage": "generating",
-                "step": step + 1,
-                "total": NUM_STEPS,
-                "progress": round(progress, 3),
-            }
-        )
-        return callback_kwargs
-
-    def run_pipeline():
-        try:
-            images = pipe(
-                prompt=prompt,
-                image=input_image,
-                num_inference_steps=NUM_STEPS,
-                guidance_scale=4.0,
-                height=256,
-                width=256,
-                generator=generator,
-                callback_on_step_end=callback_on_step_end,
-            ).images
-            with io.BytesIO() as buf:
-                images[0].save(buf, format="PNG")
-                img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            q.put({"stage": "complete", "image": img_b64})
-        except Exception as e:
-            q.put({"stage": "error", "message": str(e)})
-        finally:
-            q.put(None)
-
-    t = threading.Thread(target=run_pipeline)
-    t.start()
-
-    while True:
-        event = q.get()
-        if event is None:
-            break
-        yield f"data: {json.dumps(event)}\n\n"
-
-    t.join()
-    torch.cuda.empty_cache()
+web_app = FastAPI()
 
 
 def _img_to_b64(img):
+    import base64
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-@app.cls(
-    image=image,
+@modal_app.cls(
+    image=modal_image,
     gpu="L4",
     timeout=5 * 60,
     secrets=[modal.Secret.from_name("huggingface-secret")],
@@ -151,9 +90,11 @@ class Inference:
         import glob
         import os
 
+        import diffusers
+        import torch
         from datasets import load_dataset
 
-        # Find the latest checkpoint by numeric sort (checkpoint-500, checkpoint-4500, etc.)
+        # Find the latest checkpoint by numeric sort
         checkpoints = glob.glob(os.path.join(FULL_OUTPUT_DIR, "checkpoint-*"))
         if checkpoints:
             checkpoints.sort(key=lambda p: int(os.path.basename(p).split("-")[-1]))
@@ -164,7 +105,6 @@ class Inference:
             self.checkpoint_name = "final"
 
         # Load the base pipeline, then swap in the fine-tuned transformer.
-        # Checkpoints only contain transformer weights, not a full pipeline.
         print(f"Loading base pipeline from: {FULL_MODEL_DIR}")
         self.pipe = diffusers.Flux2KleinPipeline.from_pretrained(
             FULL_MODEL_DIR,
@@ -212,56 +152,115 @@ class Inference:
                 )
         print(f"Loaded {len(self.test_samples)} test samples")
 
-    @modal.fastapi_endpoint(method="GET", docs=True)
-    async def status(self):
-        """Return the current model checkpoint info."""
-        return JSONResponse({"checkpoint": self.checkpoint_name})
+    def _sse_generate(self, prompt, input_image, seed):
+        import base64
+        import json
+        import queue
+        import threading
 
-    @modal.fastapi_endpoint(method="POST", docs=True)
-    async def route(self, request: Request):
-        """Accept a connection-pairs image and return a routed image.
+        import torch
 
-        POST body (JSON):
-            input_image: base64-encoded PNG of the connection-pairs image
-            instruction: (optional) edit instruction text
-            seed:        (optional) RNG seed for reproducibility
-        """
-        body = await request.json()
+        seed = seed if seed is not None else random.randint(0, 2**32 - 1)
+        generator = torch.Generator("cuda").manual_seed(seed)
 
-        if "input_image" not in body:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "input_image is required"},
+        q = queue.Queue()
+
+        def callback_on_step_end(pipe_self, step, timestep, callback_kwargs):
+            progress = (step + 1) / NUM_STEPS
+            q.put(
+                {
+                    "stage": "generating",
+                    "step": step + 1,
+                    "total": NUM_STEPS,
+                    "progress": round(progress, 3),
+                }
+            )
+            return callback_kwargs
+
+        def run_pipeline():
+            try:
+                images = self.pipe(
+                    prompt=prompt,
+                    image=input_image,
+                    num_inference_steps=NUM_STEPS,
+                    guidance_scale=4.0,
+                    height=256,
+                    width=256,
+                    generator=generator,
+                    callback_on_step_end=callback_on_step_end,
+                ).images
+                with io.BytesIO() as buf:
+                    images[0].save(buf, format="PNG")
+                    img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                q.put({"stage": "complete", "image": img_b64})
+            except Exception as e:
+                q.put({"stage": "error", "message": str(e)})
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=run_pipeline)
+        t.start()
+
+        while True:
+            event = q.get()
+            if event is None:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+        t.join()
+        torch.cuda.empty_cache()
+
+    @modal.asgi_app()
+    def serve(self):
+        from PIL import Image
+
+        inference = self
+
+        @web_app.get("/status")
+        async def status():
+            return JSONResponse({"checkpoint": inference.checkpoint_name})
+
+        @web_app.post("/route")
+        async def route(request: Request):
+            import base64
+
+            body = await request.json()
+
+            if "input_image" not in body:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "input_image is required"},
+                )
+
+            input_b64 = body["input_image"]
+            instruction = body.get("instruction", DEFAULT_INSTRUCTION)
+            seed = body.get("seed")
+
+            input_bytes = base64.b64decode(input_b64)
+            input_image = Image.open(io.BytesIO(input_bytes)).convert("RGB")
+            input_image = input_image.resize((256, 256))
+
+            print(
+                f"Inference: instruction={instruction!r}, "
+                f"seed={seed}, image_size={input_image.size}"
             )
 
-        input_b64 = body["input_image"]
-        instruction = body.get("instruction", DEFAULT_INSTRUCTION)
-        seed = body.get("seed")
+            return StreamingResponse(
+                inference._sse_generate(instruction, input_image, seed),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
-        input_bytes = base64.b64decode(input_b64)
-        input_image = Image.open(io.BytesIO(input_bytes)).convert("RGB")
-        input_image = input_image.resize((256, 256))
+        @web_app.get("/")
+        async def test_page():
+            import json
 
-        print(
-            f"Inference: instruction={instruction!r}, "
-            f"seed={seed}, image_size={input_image.size}"
-        )
+            samples_json = json.dumps(inference.test_samples)
 
-        return StreamingResponse(
-            _sse_generate(self.pipe, instruction, input_image, seed),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @modal.fastapi_endpoint(method="GET")
-    async def test(self):
-        """Test page to visually compare model outputs against ground truth."""
-        samples_json = json.dumps(self.test_samples)
-
-        html = f"""<!DOCTYPE html>
+            html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -274,8 +273,7 @@ class Inference:
   .subtitle {{ text-align: center; margin-bottom: 24px; color: #888; font-size: 0.9em; }}
   .controls {{ display: flex; gap: 12px; justify-content: center; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }}
   .controls label {{ font-size: 0.85em; color: #aaa; }}
-  .controls input, .controls select {{ background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.85em; }}
-  .controls input[type=range] {{ width: 120px; }}
+  .controls input {{ background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.85em; }}
   button {{ background: #2563eb; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; }}
   button:hover {{ background: #1d4ed8; }}
   button:disabled {{ background: #333; cursor: not-allowed; }}
@@ -293,7 +291,7 @@ class Inference:
 </head>
 <body>
 <h1>PCB Trace Router</h1>
-<p class="subtitle">Checkpoint: <strong id="checkpoint">{self.checkpoint_name}</strong></p>
+<p class="subtitle">Checkpoint: <strong id="checkpoint">{inference.checkpoint_name}</strong></p>
 
 <div class="controls">
   <label>Seed: <input type="number" id="seed" value="42" style="width:70px"></label>
@@ -304,7 +302,7 @@ class Inference:
 
 <script>
 const SAMPLES = {samples_json};
-const ROUTE_URL = window.location.origin.replace('-test', '-route');
+const ROUTE_URL = window.location.origin + '/route';
 
 function init() {{
   const grid = document.getElementById('grid');
@@ -405,4 +403,6 @@ init();
 </script>
 </body>
 </html>"""
-        return HTMLResponse(content=html)
+            return HTMLResponse(content=html)
+
+        return web_app
