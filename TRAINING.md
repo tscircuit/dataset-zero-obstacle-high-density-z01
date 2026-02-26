@@ -36,11 +36,11 @@
 | **Train samples** | 18,195 |
 | **Test samples** | 4,549 |
 | **Resolution** | 256x256 |
-| **Batch size** | 2 |
-| **Gradient accumulation** | 2 (effective batch 4) |
+| **Batch size** | 1 |
+| **Gradient accumulation** | 4 (effective batch 4) |
 | **Learning rate** | 1e-5 |
 | **LR scheduler** | cosine |
-| **LR warmup steps** | 100 |
+| **LR warmup steps** | 50 |
 | **Max train steps** | 13,650 (~3 epochs) |
 | **Checkpointing** | Every 2,000 steps |
 | **Seed** | 42 |

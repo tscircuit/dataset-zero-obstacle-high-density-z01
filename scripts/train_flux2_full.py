@@ -135,11 +135,11 @@ class TrainConfig(SharedConfig):
     hf_training_dataset: str = "tscircuit/zero-obstacle-high-density-z01"
 
     resolution: int = 256
-    train_batch_size: int = 2
-    gradient_accumulation_steps: int = 2  # effective batch size = 4
-    learning_rate: float = 1e-5  # same range as morphmaker full FT
+    train_batch_size: int = 1
+    gradient_accumulation_steps: int = 4  # effective batch size = 4
+    learning_rate: float = 1e-5
     lr_scheduler: str = "cosine"
-    lr_warmup_steps: int = 100
+    lr_warmup_steps: int = 50
     # 18195 train images / effective_batch 4 = ~4549 steps/epoch, * 3 epochs ≈ 13647
     max_train_steps: int = 13650
     checkpointing_steps: int = 2000
