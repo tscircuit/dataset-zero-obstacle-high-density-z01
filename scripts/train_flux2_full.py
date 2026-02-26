@@ -142,7 +142,7 @@ class TrainConfig(SharedConfig):
     lr_warmup_steps: int = 100
     # 18195 train images / effective_batch 4 = ~4549 steps/epoch, * 3 epochs ≈ 13647
     max_train_steps: int = 13650
-    checkpointing_steps: int = 4549  # checkpoint once per epoch
+    checkpointing_steps: int = 2000
     seed: int = 42
 
 
