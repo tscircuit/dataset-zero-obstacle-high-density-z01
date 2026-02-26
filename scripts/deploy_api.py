@@ -12,7 +12,7 @@ import modal
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-modal_app = modal.App("pcbrouter-flux2")
+app = modal.App("pcbrouter-flux2")
 
 # Diffusers SHA: "Support Flux Klein peft (fal) lora format" (2026-02-21).
 # Before the transformers v5 migration (2026-02-24) for stability.
@@ -63,7 +63,7 @@ DEFAULT_INSTRUCTION = (
 TEST_SAMPLE_INDICES = [0, 500, 1000, 2000, 3000, 4000]
 HF_DATASET = "tscircuit/zero-obstacle-high-density-z01"
 
-web_app = FastAPI()
+fastapi_app = FastAPI()
 
 
 def _img_to_b64(img):
@@ -74,7 +74,7 @@ def _img_to_b64(img):
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-@modal_app.cls(
+@app.cls(
     image=modal_image,
     gpu="L4",
     timeout=5 * 60,
@@ -216,11 +216,11 @@ class Inference:
 
         inference = self
 
-        @web_app.get("/status")
+        @fastapi_app.get("/status")
         async def status():
             return JSONResponse({"checkpoint": inference.checkpoint_name})
 
-        @web_app.post("/route")
+        @fastapi_app.post("/route")
         async def route(request: Request):
             import base64
 
@@ -254,7 +254,7 @@ class Inference:
                 },
             )
 
-        @web_app.get("/")
+        @fastapi_app.get("/")
         async def test_page():
             import json
 
@@ -405,4 +405,4 @@ init();
 </html>"""
             return HTMLResponse(content=html)
 
-        return web_app
+        return fastapi_app
