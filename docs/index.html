@@ -88,7 +88,7 @@
 
 <script>
 const HF_DATASET = "tscircuit/zero-obstacle-high-density-z01";
-const SAMPLE_INDICES = [0, 100, 500, 1000, 2000, 3000, 4000];
+const SAMPLE_INDICES = [0, 10, 50, 100, 500, 1000, 2000, 3000, 4000];
 let samples = [];
 let generating = false;
 
@@ -98,19 +98,18 @@ async function loadSamples() {
   statusEl.textContent = 'Loading test samples from HuggingFace...';
 
   try {
-    // Fetch parquet rows directly from the HF datasets server
-    const resp = await fetch(
-      `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(HF_DATASET)}&config=default&split=test&offset=0&length=100`
-    );
-    const data = await resp.json();
-    const rows = data.rows;
-
     const select = document.getElementById('sample-select');
     select.innerHTML = '';
 
+    // Fetch each sample individually so we can access any offset in the test set
     for (const idx of SAMPLE_INDICES) {
-      if (idx < rows.length) {
-        const row = rows[idx].row;
+      statusEl.textContent = `Loading sample #${idx}...`;
+      const resp = await fetch(
+        `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(HF_DATASET)}&config=default&split=test&offset=${idx}&length=1`
+      );
+      const data = await resp.json();
+      if (data.rows && data.rows.length > 0) {
+        const row = data.rows[0].row;
         samples.push({
           idx: idx,
           cond_src: row.cond_image.src,
