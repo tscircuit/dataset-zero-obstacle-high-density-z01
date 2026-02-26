@@ -28,21 +28,22 @@
 | **Modal volume** | `pcbrouter-flux2-klein-short-volume` |
 | **Script** | `scripts/train_flux2_short.py` |
 
-## 22k-Sample Dataset (Long Model)
+## 1M-Sample Dataset (Long Model)
 
 | Parameter | Value |
 |-----------|-------|
 | **Dataset** | `tscircuit/zero-obstacle-high-density-z01` |
-| **Train samples** | 18,195 |
-| **Test samples** | 4,549 |
+| **Train samples** | ~1M |
 | **Resolution** | 256x256 |
 | **Batch size** | 1 |
-| **Gradient accumulation** | 4 (effective batch 4) |
-| **Learning rate** | 1e-5 |
-| **LR scheduler** | cosine |
-| **LR warmup steps** | 50 |
-| **Max train steps** | 13,650 (~3 epochs) |
-| **Checkpointing** | Every 2,000 steps |
+| **Gradient accumulation** | 8 (effective batch 8) |
+| **Learning rate** | 1e-6 |
+| **LR scheduler** | constant_with_warmup |
+| **LR warmup steps** | 500 |
+| **Max train steps** | 125,000 (~1 epoch) |
+| **Checkpointing** | Every 5,000 steps |
+| **Weighting scheme** | logit_normal |
+| **Max grad norm** | 1.0 |
 | **Seed** | 42 |
 | **Modal volume** | `pcbrouter-flux2-klein-full-volume` |
 | **Script** | `scripts/train_flux2_full.py` |

@@ -136,13 +136,14 @@ class TrainConfig(SharedConfig):
 
     resolution: int = 256
     train_batch_size: int = 1
-    gradient_accumulation_steps: int = 4  # effective batch size = 4
-    learning_rate: float = 1e-5
-    lr_scheduler: str = "cosine"
-    lr_warmup_steps: int = 50
-    # 18195 train images / effective_batch 4 = ~4549 steps/epoch, * 3 epochs ≈ 13647
-    max_train_steps: int = 13650
-    checkpointing_steps: int = 2000
+    gradient_accumulation_steps: int = 8  # effective batch size = 8
+    learning_rate: float = 1e-6  # very low for full FT of 4B model
+    lr_scheduler: str = "constant_with_warmup"
+    lr_warmup_steps: int = 500
+    # ~1M train images / effective_batch 8 = ~125k steps/epoch
+    # 1 epoch is likely sufficient with this much data
+    max_train_steps: int = 125000
+    checkpointing_steps: int = 5000
     seed: int = 42
 
 
@@ -208,6 +209,8 @@ def train(config, segment_end: int, resume: bool):
         f"--max_train_steps={segment_end}",
         f"--checkpointing_steps={config.checkpointing_steps}",
         f"--seed={config.seed}",
+        "--weighting_scheme=logit_normal",
+        "--max_grad_norm=1.0",
     ]
     if resume:
         cmd.append("--resume_from_checkpoint=latest")
@@ -220,7 +223,7 @@ def train(config, segment_end: int, resume: bool):
 
 @app.local_entrypoint()
 def run(
-    max_train_steps: int = 13650,
+    max_train_steps: int = 125000,
     start_step: int = 0,
 ):
     import subprocess
