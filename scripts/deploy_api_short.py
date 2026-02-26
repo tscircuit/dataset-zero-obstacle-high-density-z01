@@ -156,16 +156,47 @@ class Inference:
 
         from datasets import load_dataset
 
-        # Load from the latest checkpoint, or the final output if training is complete.
-        checkpoints = sorted(glob.glob(os.path.join(FULL_OUTPUT_DIR, "checkpoint-*")))
-        model_path = checkpoints[-1] if checkpoints else FULL_OUTPUT_DIR
-        self.checkpoint_name = os.path.basename(model_path)
-        print(f"Loading model from: {model_path}")
+        # Find the latest checkpoint by numeric sort (checkpoint-500, checkpoint-4500, etc.)
+        checkpoints = glob.glob(os.path.join(FULL_OUTPUT_DIR, "checkpoint-*"))
+        if checkpoints:
+            checkpoints.sort(key=lambda p: int(os.path.basename(p).split("-")[-1]))
+            checkpoint_path = checkpoints[-1]
+            self.checkpoint_name = os.path.basename(checkpoint_path)
+        else:
+            checkpoint_path = None
+            self.checkpoint_name = "final"
 
+        # Load the base pipeline, then swap in the fine-tuned transformer.
+        # Checkpoints only contain transformer weights, not a full pipeline.
+        print(f"Loading base pipeline from: {FULL_MODEL_DIR}")
         self.pipe = diffusers.Flux2KleinPipeline.from_pretrained(
-            model_path,
+            FULL_MODEL_DIR,
             torch_dtype=torch.bfloat16,
         )
+
+        if checkpoint_path:
+            transformer_path = os.path.join(checkpoint_path, "transformer")
+            if os.path.isdir(transformer_path):
+                print(f"Loading fine-tuned transformer from: {transformer_path}")
+                from diffusers import Flux2KleinTransformer2DModel
+
+                self.pipe.transformer = Flux2KleinTransformer2DModel.from_pretrained(
+                    transformer_path,
+                    torch_dtype=torch.bfloat16,
+                )
+            else:
+                print(f"Warning: no transformer dir in {checkpoint_path}, using base model")
+        else:
+            print(f"Loading final model from: {FULL_OUTPUT_DIR}")
+            from diffusers import Flux2KleinTransformer2DModel
+
+            transformer_path = os.path.join(FULL_OUTPUT_DIR, "transformer")
+            if os.path.isdir(transformer_path):
+                self.pipe.transformer = Flux2KleinTransformer2DModel.from_pretrained(
+                    transformer_path,
+                    torch_dtype=torch.bfloat16,
+                )
+
         self.pipe.to("cuda")
 
         # Load test samples for the test page
