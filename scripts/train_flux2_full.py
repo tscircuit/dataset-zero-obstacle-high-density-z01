@@ -130,8 +130,9 @@ class TrainConfig(SharedConfig):
     - Gradient checkpointing for memory efficiency
     """
 
-    # HuggingFace dataset with Lance format
-    hf_dataset: str = "makeshifted/zero-obstacle-high-density-z01"
+    # HuggingFace dataset with paired images (cond_image, output_image,
+    # instruction columns), pushed by convert_and_upload.py.
+    hf_training_dataset: str = "makeshifted/zero-obstacle-high-density-z01-training"
 
     resolution: int = 256
     train_batch_size: int = 1  # img2img pairs need more memory per sample
@@ -143,12 +144,6 @@ class TrainConfig(SharedConfig):
     max_train_steps: int = 5400
     checkpointing_steps: int = 500
     seed: int = 42
-
-
-    # HuggingFace datasets repo with paired images (cond_image, output_image,
-    # instruction columns) pre-pushed by convert_to_lance.py.
-    # The DreamBooth script loads this via datasets.load_dataset().
-    hf_training_dataset: str = "makeshifted/zero-obstacle-high-density-z01-training"
 
 
 @app.function(
