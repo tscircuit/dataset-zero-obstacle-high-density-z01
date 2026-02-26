@@ -133,7 +133,7 @@ class TrainConfig(SharedConfig):
     # HuggingFace dataset with paired images (cond_image, output_image,
     # instruction columns).
     hf_training_dataset: str = "tscircuit/zero-obstacle-high-density-z01"
-    max_train_samples: int = 100000  # limit to avoid OOM (script loads all into memory)
+    max_train_samples: int = 50000  # limit to avoid OOM (script loads all into memory)
 
     resolution: int = 256
     train_batch_size: int = 1
@@ -141,8 +141,8 @@ class TrainConfig(SharedConfig):
     learning_rate: float = 1e-6  # very low for full FT of 4B model
     lr_scheduler: str = "constant_with_warmup"
     lr_warmup_steps: int = 500
-    # 100k train images / effective_batch 8 = 12500 steps/epoch, ~2 epochs
-    max_train_steps: int = 25000
+    # 50k train images / effective_batch 8 = 6250 steps/epoch, ~3 epochs
+    max_train_steps: int = 18750
     checkpointing_steps: int = 2500
     seed: int = 42
 
@@ -238,7 +238,7 @@ def train(config, segment_end: int, resume: bool):
 
 @app.local_entrypoint()
 def run(
-    max_train_steps: int = 25000,
+    max_train_steps: int = 18750,
     start_step: int = 0,
 ):
     import subprocess
