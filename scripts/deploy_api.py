@@ -159,7 +159,7 @@ class Inference:
                     })
                     return callback_kwargs
 
-                q.put({"stage": "loading", "message": "Starting generation..."})
+                q.put({"stage": "loading", "message": f"Generating with prompt: {prompt[:60]}..."})
                 images = self.pipe(
                     prompt=prompt, image=input_image,
                     num_inference_steps=NUM_STEPS, guidance_scale=4.0,
