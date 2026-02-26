@@ -46,16 +46,17 @@ image = (
     )
 )
 
-with image.imports():
-    import base64
-    import json
-    import queue
-    import threading
+import base64
+import json
+import queue
+import threading
 
+from fastapi import Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+
+with image.imports():
     import diffusers
     import torch
-    from fastapi import Request
-    from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
     from PIL import Image
 
 FULL_MODEL_DIR = "/model-full"
