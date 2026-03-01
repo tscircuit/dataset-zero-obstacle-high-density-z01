@@ -138,7 +138,7 @@ class TrainConfig(SharedConfig):
     resolution: int = 256
     train_batch_size: int = 1
     gradient_accumulation_steps: int = 8  # effective batch size = 8
-    learning_rate: float = 1e-6  # very low for full FT of 4B model
+    learning_rate: float = 5e-6
     lr_scheduler: str = "constant_with_warmup"
     lr_warmup_steps: int = 500
     # 50k train images / effective_batch 8 = 6250 steps/epoch, ~3 epochs
