@@ -28,25 +28,33 @@
 | **Modal volume** | `pcbrouter-flux2-klein-short-volume` |
 | **Script** | `scripts/train_flux2_short.py` |
 
-## 1M-Sample Dataset (Long Model)
+## 50k-Sample Dataset (Current Model — LR 5e-6)
 
 | Parameter | Value |
 |-----------|-------|
-| **Dataset** | `tscircuit/zero-obstacle-high-density-z01` |
-| **Train samples** | ~1M |
+| **Dataset** | `tscircuit/zero-obstacle-high-density-z01` (first 50k) |
+| **Train samples** | 50,000 |
 | **Resolution** | 256x256 |
 | **Batch size** | 1 |
 | **Gradient accumulation** | 8 (effective batch 8) |
-| **Learning rate** | 1e-6 |
+| **Learning rate** | 5e-6 |
 | **LR scheduler** | constant_with_warmup |
 | **LR warmup steps** | 500 |
-| **Max train steps** | 125,000 (~1 epoch) |
-| **Checkpointing** | Every 5,000 steps |
+| **Max train steps** | 18,750 (~3 epochs) |
+| **Checkpointing** | Every 2,500 steps |
 | **Weighting scheme** | logit_normal |
 | **Max grad norm** | 1.0 |
 | **Seed** | 42 |
 | **Modal volume** | `pcbrouter-flux2-klein-full-volume` |
 | **Script** | `scripts/train_flux2_full.py` |
+
+### Previous runs (same script, different LR)
+
+| Run | LR | Result |
+|-----|----|--------|
+| 1 | 1e-5 | Corrupted outputs (good local, bad global structure) |
+| 2 | 1e-6 | Barely learned (too conservative) |
+| 3 | 5e-6 | Current deployed model |
 
 ## Inference Settings
 
